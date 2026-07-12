@@ -1,3 +1,11 @@
+import {
+  ENTRY_SAFE_BLOCK_TYPES,
+  collectArchiveAssetNames,
+  repairEntryProject,
+  validateEntryProject,
+} from "./entry-safety.js";
+import { buildEntBlob, readEntArchive } from "./entry-archive.js";
+
 const storageKeys = {
   apiKey: "vibentry:api-key",
   remember: "vibentry:remember-key",
@@ -72,6 +80,9 @@ let starterTemplate = null;
 let loadedFiles = [];
 let generatedProject = null;
 let generatedProjectName = "vibentry-project";
+let generatedArchiveEntries = [];
+let generatedBaseProject = null;
+let generatedValidation = null;
 let historyEntries = [];
 let selectedObjectId = null;
 let selectedModelName = "";
@@ -216,12 +227,14 @@ async function loadSelectedFiles(files) {
 
 async function inspectFile(file) {
   if (file.name.toLowerCase().endsWith(".ent")) {
-    const project = await readEntProject(file);
+    const archive = await readEntArchive(file);
+    const project = archive.project;
     return {
       kind: "ent",
       name: file.name,
       size: file.size,
       project,
+      archiveEntries: archive.entries,
       summary: summarizeProject(project),
     };
   }
@@ -258,60 +271,6 @@ function isTextLike(file) {
     lower.endsWith(".css") ||
     lower.endsWith(".csv")
   );
-}
-
-async function readEntProject(file) {
-  if (!("DecompressionStream" in window)) {
-    throw new Error("이 브라우저는 gzip 압축 해제를 지원하지 않아요.");
-  }
-
-  const compressed = await file.arrayBuffer();
-  const tarBuffer = await gunzipBuffer(compressed);
-  const entries = parseTar(tarBuffer);
-  const jsonEntry = entries.find((entry) => entry.name === "temp/project.json");
-  if (!jsonEntry) {
-    throw new Error(".ent 안에서 temp/project.json을 찾지 못했어요.");
-  }
-  const raw = new TextDecoder().decode(jsonEntry.data);
-  return JSON.parse(raw);
-}
-
-async function gunzipBuffer(buffer) {
-  const ds = new DecompressionStream("gzip");
-  const stream = new Blob([buffer]).stream().pipeThrough(ds);
-  return new Response(stream).arrayBuffer();
-}
-
-function parseTar(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const entries = [];
-  let offset = 0;
-
-  while (offset + 512 <= bytes.length) {
-    const header = bytes.slice(offset, offset + 512);
-    if (header.every((value) => value === 0)) {
-      break;
-    }
-
-    const name = readTarString(header.slice(0, 100));
-    const sizeText = readTarString(header.slice(124, 136)).trim();
-    const size = sizeText ? Number.parseInt(sizeText, 8) : 0;
-    const dataStart = offset + 512;
-    const dataEnd = dataStart + size;
-
-    entries.push({
-      name,
-      data: bytes.slice(dataStart, dataEnd),
-    });
-
-    offset = dataStart + Math.ceil(size / 512) * 512;
-  }
-
-  return entries;
-}
-
-function readTarString(slice) {
-  return new TextDecoder().decode(slice).replace(/\0.*$/, "");
 }
 
 function summarizeProject(project) {
@@ -381,6 +340,9 @@ async function handleGenerate() {
   }
 
   generatedProject = null;
+  generatedArchiveEntries = [];
+  generatedBaseProject = null;
+  generatedValidation = null;
   renderAssistantFiles();
   generateBtn.disabled = true;
   setStatus("Gemini가 엔트리 작품 구조를 만드는 중이에요...", true);
@@ -388,18 +350,47 @@ async function handleGenerate() {
   try {
     const prompt = buildPromptV2();
     const rawResult = await callGeminiAuto(apiKey, prompt);
-    const result = normalizeSimpleRequestResult(promptInput.value.trim(), rawResult);
+    const result = normalizeSimpleRequestResult(promptInput.value.trim(), rawResult) || {};
+    const primaryEnt = getPrimaryEntFile();
+    const baseProject = currentMode === "edit" && primaryEnt ? primaryEnt.project : starterTemplate;
+    const sourceEntries = currentMode === "edit" && primaryEnt ? primaryEnt.archiveEntries || [] : [];
+    const availableAssets = collectArchiveAssetNames(sourceEntries);
+    const candidateProject = result.project_name && result.project_json && typeof result.project_json === "object"
+      ? { ...result.project_json, name: result.project_name }
+      : result.project_json;
+    const safety = repairEntryProject(candidateProject, baseProject, {
+      mode: currentMode,
+      availableAssets,
+    });
 
-    generatedProject = result.project_json;
+    if (safety.validation.errors.length) {
+      throw {
+        kind: "project_validation",
+        message: "AI 결과를 자동 복구한 뒤에도 안전 검사 오류가 남았어요.",
+        issues: safety.validation.errors,
+      };
+    }
+
+    result.project_json = safety.project;
+    result.warnings = uniqueTextItems([
+      ...(Array.isArray(result.warnings) ? result.warnings : []),
+      ...safety.warnings,
+      ...safety.validation.warnings,
+    ]);
+    result.safety_summary = safety.repaired
+      ? `안전 컴파일 완료: ${safety.warnings.length}종류를 자동 복구하고 ${safety.validation.stats.blocks}개 블록을 검사했어요.`
+      : `안전 검사 통과: ${safety.validation.stats.blocks}개 블록과 모든 주요 참조를 확인했어요.`;
+
+    generatedProject = safety.project;
+    generatedArchiveEntries = sourceEntries;
+    generatedBaseProject = baseProject;
+    generatedValidation = safety.validation;
+    result.project_name = generatedProject.name || result.project_name || "vibentry 작품";
     generatedProjectName = sanitizeFileStem(
       result.download_name || result.project_name || generatedProject?.name || "vibentry-project"
     );
 
-    if (result.project_name && generatedProject && typeof generatedProject === "object") {
-      generatedProject.name = result.project_name;
-    }
-
-    ensureProjectLooksValid(generatedProject);
+    ensureProjectLooksValid(generatedProject, generatedBaseProject, availableAssets);
     renderResponse(result);
     renderGeneratedProjectSummary(generatedProject);
     renderPreviewProject(generatedProject);
@@ -409,6 +400,8 @@ async function handleGenerate() {
       mode: currentMode,
       prompt: promptInput.value.trim(),
       project: generatedProject,
+      sourceEntName: primaryEnt?.name || "",
+      requiresSourceArchive: archiveHasProjectAssets(generatedArchiveEntries),
     });
 
     if (Array.isArray(result.warnings) && result.warnings.length) {
@@ -505,8 +498,14 @@ function buildPromptV2() {
     "Return exactly one JSON object matching this schema: assistant_message, project_name, optional download_name, optional warnings, project_json.",
     "project_json must be a complete valid Entry project object.",
     "Do not wrap the response in markdown.",
+    "Work like a careful compiler: preserve the starter structure first, then change only fields needed by the request.",
     "Keep top-level Entry structure valid: objects, scenes, variables, messages, functions, tables, speed, interface.",
     "Keep references consistent: object ids, scene ids, selectedPictureId, interface.object.",
+    "Every object.script and function.content must be a JSON-stringified two-dimensional array of Entry block objects.",
+    "Every object, scene, variable, message, function, picture, sound, and block id must be unique and all references must point to an existing id.",
+    "Never invent image or sound URLs. Reuse asset metadata already present in starter_project_json.",
+    `Only use these verified Entry block types unless the starter already contains another type: ${ENTRY_SAFE_BLOCK_TYPES.join(", ")}.`,
+    "If a requested feature cannot be represented safely with those blocks, keep the valid base behavior and explain the limitation in warnings.",
     "If the starter template contains placeholder names or placeholder dialog text, replace them with content that matches the user request.",
     "Do not keep unrelated physics-engine names, variables, objects, or scripts unless the user explicitly asked for them.",
     "When the user only wants a simple speaking project, keep the project minimal.",
@@ -793,6 +792,20 @@ function toFriendlyGeminiError(error) {
     };
   }
 
+  if (error?.kind === "project_validation") {
+    const issues = Array.isArray(error.issues) ? error.issues.slice(0, 8) : [];
+    return {
+      statusText: "안전 검사에서 파일 생성을 중단했어요.",
+      alertType: "warning",
+      alertText: [
+        "AI가 만든 구조에 엔트리에서 오류를 낼 수 있는 부분이 남아 있어 파일을 제공하지 않았어요.",
+        "같은 요청을 조금 더 단순하게 적어 다시 시도해 주세요.",
+        issues.length ? "" : null,
+        ...issues.map((issue) => `- ${issue}`),
+      ].filter(Boolean).join("\n"),
+    };
+  }
+
   const raw = `${error?.message || ""} ${error?.error?.status || ""}`.toLowerCase();
   if (
     error?.status === 429 ||
@@ -844,17 +857,16 @@ function toFriendlyGeminiError(error) {
   };
 }
 
-function ensureProjectLooksValid(project) {
-  if (!project || typeof project !== "object") {
-    throw new Error("project_json이 비어 있어요.");
+function ensureProjectLooksValid(project, baseProject = starterTemplate, availableAssets = new Set()) {
+  const validation = validateEntryProject(project, { baseProject, availableAssets });
+  if (validation.errors.length) {
+    throw {
+      kind: "project_validation",
+      message: validation.errors[0],
+      issues: validation.errors,
+    };
   }
-
-  const requiredKeys = ["objects", "scenes", "variables", "speed", "interface"];
-  for (const key of requiredKeys) {
-    if (!(key in project)) {
-      throw new Error(`필수 키가 빠졌어요: ${key}`);
-    }
-  }
+  return validation;
 }
 
 function renderResponse(result) {
@@ -867,6 +879,7 @@ function renderResponse(result) {
   responseBox.textContent = [
     `작품 이름: ${result.project_name || "(이름 없음)"}`,
     modelText,
+    result.safety_summary || "",
     "",
     result.assistant_message || "설명이 없어요.",
     warningText,
@@ -1144,7 +1157,14 @@ function loadHistoryEntries() {
   }
 }
 
-function pushHistoryEntry({ projectName, mode, prompt, project }) {
+function pushHistoryEntry({
+  projectName,
+  mode,
+  prompt,
+  project,
+  sourceEntName = "",
+  requiresSourceArchive = false,
+}) {
   const entry = {
     id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: new Date().toISOString(),
@@ -1153,6 +1173,8 @@ function pushHistoryEntry({ projectName, mode, prompt, project }) {
     prompt,
     summary: summarizeProject(project),
     project,
+    sourceEntName,
+    requiresSourceArchive,
   };
 
   historyEntries = [entry, ...historyEntries].slice(0, 8);
@@ -1190,6 +1212,7 @@ function renderHistory() {
       <div class="history-meta">
         <div>${formatDate(entry.createdAt)} | ${entry.mode === "edit" ? "수정 모드" : "생성 모드"}</div>
         <div>${escapeHtml(trimText(entry.prompt || "", 90))}</div>
+        ${entry.requiresSourceArchive ? `<div>원본 자산 필요: ${escapeHtml(entry.sourceEntName || ".ent 파일")}</div>` : ""}
       </div>
       <div class="history-actions">
         <button type="button" class="history-btn" data-load-history="${escapeHtml(entry.id)}">불러오기</button>
@@ -1207,6 +1230,16 @@ function renderHistory() {
       }
       generatedProject = entry.project;
       generatedProjectName = sanitizeFileStem(entry.projectName || "vibentry-project");
+      const currentEnt = getPrimaryEntFile();
+      const canRestoreAssets = entry.requiresSourceArchive
+        && currentEnt
+        && (!entry.sourceEntName || currentEnt.name === entry.sourceEntName);
+      generatedArchiveEntries = canRestoreAssets ? currentEnt.archiveEntries || [] : [];
+      generatedBaseProject = entry.project;
+      generatedValidation = validateEntryProject(entry.project, {
+        baseProject: entry.project,
+        availableAssets: collectArchiveAssetNames(generatedArchiveEntries),
+      });
       promptInput.value = entry.prompt || "";
       setMode(entry.mode || "create");
       renderGeneratedProjectSummary(generatedProject);
@@ -1216,7 +1249,14 @@ function renderHistory() {
       responseBox.textContent = `히스토리에서 불러온 결과예요.\n\n${entry.summary}`;
       persistLocalState();
       setStatus("저장된 히스토리를 다시 불러왔어요.", false);
-      setAlert("이전 결과를 다시 열었어요. AI가 준 파일 칩도 함께 다시 볼 수 있어요.", "success");
+      if (entry.requiresSourceArchive && !canRestoreAssets) {
+        setAlert(
+          `코드와 미리보기는 불러왔지만 이미지·소리를 포함해 다시 내려받으려면 원본 ${entry.sourceEntName || ".ent 파일"}을 먼저 올려 주세요.`,
+          "warning"
+        );
+      } else {
+        setAlert("이전 결과와 필요한 파일 자산을 다시 열었어요.", "success");
+      }
     });
   });
 
@@ -1263,12 +1303,31 @@ async function downloadGeneratedEnt() {
 
   setStatus("AI가 만든 .ent 파일을 준비하는 중이에요...", true);
   try {
-    const blob = await buildEntBlob(generatedProject);
+    const beforeValidation = ensureProjectLooksValid(
+      generatedProject,
+      generatedBaseProject || starterTemplate,
+      collectArchiveAssetNames(generatedArchiveEntries)
+    );
+    const blob = await buildEntBlob(generatedProject, generatedArchiveEntries);
+    const reopened = await readEntArchive(blob);
+    const afterValidation = ensureProjectLooksValid(
+      reopened.project,
+      generatedBaseProject || starterTemplate,
+      collectArchiveAssetNames(reopened.entries)
+    );
+    if (JSON.stringify(reopened.project) !== JSON.stringify(generatedProject)) {
+      throw new Error("압축 후 project.json 내용이 달라졌어요.");
+    }
+    generatedValidation = afterValidation;
     downloadBlob(blob, `${generatedProjectName}.ent`);
-    setStatus("AI가 .ent 파일을 내려줬어요.", false);
+    setStatus(
+      `자체 테스트 통과: 블록 ${beforeValidation.stats.blocks}개를 확인하고 .ent 파일을 내려줬어요.`,
+      false
+    );
   } catch (error) {
     setStatus(`.ent 생성 실패: ${error.message}`, false);
-    setAlert("브라우저에서 `.ent` 압축 생성에 실패했어요. 최신 브라우저에서 다시 시도해 주세요.", "error");
+    const issues = Array.isArray(error?.issues) ? `\n\n- ${error.issues.slice(0, 8).join("\n- ")}` : "";
+    setAlert(`안전한 .ent 파일을 만들지 못해 다운로드를 중단했어요.${issues}`, "error");
   }
 }
 
@@ -1282,71 +1341,6 @@ function downloadGeneratedJson() {
   });
   downloadBlob(blob, `${generatedProjectName}.project.json`);
   setStatus("AI가 project.json 파일을 내려줬어요.", false);
-}
-
-async function buildEntBlob(project) {
-  if (!("CompressionStream" in window)) {
-    throw new Error("이 브라우저는 gzip 압축을 지원하지 않아요.");
-  }
-
-  const encoder = new TextEncoder();
-  const files = [
-    { name: "temp/", data: new Uint8Array(0), typeFlag: "5", mode: 0o755 },
-    {
-      name: "temp/project.json",
-      data: encoder.encode(JSON.stringify(project)),
-      typeFlag: "0",
-      mode: 0o644,
-    },
-  ];
-
-  const tarParts = [];
-  for (const file of files) {
-    const header = createTarHeader(file.name, file.data.length, file.typeFlag, file.mode);
-    tarParts.push(header);
-    if (file.data.length) {
-      tarParts.push(file.data);
-      tarParts.push(new Uint8Array((512 - (file.data.length % 512)) % 512));
-    }
-  }
-  tarParts.push(new Uint8Array(1024));
-
-  const tarBlob = new Blob(tarParts, { type: "application/octet-stream" });
-  const gzipStream = tarBlob.stream().pipeThrough(new CompressionStream("gzip"));
-  return new Response(gzipStream).blob();
-}
-
-function createTarHeader(name, size, typeFlag, mode) {
-  const header = new Uint8Array(512);
-  writeTarString(header, 0, 100, name);
-  writeTarOctal(header, 100, 8, mode);
-  writeTarOctal(header, 108, 8, 0);
-  writeTarOctal(header, 116, 8, 0);
-  writeTarOctal(header, 124, 12, size);
-  writeTarOctal(header, 136, 12, Math.floor(Date.now() / 1000));
-  header.fill(32, 148, 156);
-  header[156] = typeFlag.charCodeAt(0);
-  writeTarString(header, 257, 6, "ustar");
-  writeTarString(header, 263, 2, "00");
-
-  let checksum = 0;
-  for (const value of header) {
-    checksum += value;
-  }
-
-  const checksumText = checksum.toString(8).padStart(6, "0");
-  writeTarString(header, 148, 8, `${checksumText}\0 `);
-  return header;
-}
-
-function writeTarString(buffer, start, length, value) {
-  const encoded = new TextEncoder().encode(value);
-  buffer.set(encoded.slice(0, length), start);
-}
-
-function writeTarOctal(buffer, start, length, value) {
-  const text = value.toString(8).padStart(length - 1, "0");
-  writeTarString(buffer, start, length, text);
 }
 
 function downloadBlob(blob, filename) {
@@ -1386,6 +1380,17 @@ function sanitizeFileStem(value) {
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, "-")
     .replace(/\s+/g, "_")
     .slice(0, 80) || "vibentry-project";
+}
+
+function uniqueTextItems(items) {
+  return [...new Set(items.filter((item) => typeof item === "string" && item.trim()))];
+}
+
+function archiveHasProjectAssets(entries) {
+  return entries.some((entry) => (
+    entry?.typeFlag !== "5"
+    && entry?.name !== "temp/project.json"
+  ));
 }
 
 function escapeHtml(value) {
