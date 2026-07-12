@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+
+outputs/
+work/
+
+ent-ai-studio/generated-tests/
+
+*.log
