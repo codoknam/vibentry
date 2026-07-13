@@ -1,214 +1,79 @@
 <!doctype html>
 <html lang="ko">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>vibentry</title>
-    <link rel="stylesheet" href="./styles.css">
-  </head>
-  <body>
-    <div class="app-shell">
-      <aside class="left-rail">
-        <div class="brand-card">
-          <div class="brand-mark">v</div>
-          <div>
-            <h1>vibentry</h1>
-            <p>엔트리 작품용 AI 작업실</p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>vibentry</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand"><span>v</span><strong>vibentry</strong></div>
+      <button id="newChatBtn" class="new-chat" type="button">+ 새 작품 대화</button>
+      <p class="rail-label">최근 대화</p>
+      <div id="historyList" class="history-list"></div>
+      <button id="settingsBtn" class="settings-link" type="button">Gemini API 설정</button>
+    </aside>
+
+    <main class="chat-shell">
+      <header class="topbar">
+        <button id="menuBtn" class="icon-btn mobile-only" type="button" aria-label="메뉴">☰</button>
+        <div><strong id="chatTitle">새 Entry 작품</strong><small id="modelStatus">Gemini 자동 선택</small></div>
+        <button id="previewBtn" class="preview-toggle" type="button">작품 보기</button>
+      </header>
+
+      <section id="chatThread" class="chat-thread" aria-live="polite">
+        <article class="message assistant">
+          <div class="avatar">v</div>
+          <div class="bubble">
+            <strong>무엇을 만들어 볼까요?</strong>
+            <p>초보자도 편하게 말로 설명하면 돼요. 오브젝트 추가·삭제, 블록 수정, 이미지 만들기, 링크 참고까지 같은 대화에서 계속 이어서 작업할 수 있어요.</p>
+            <div class="suggestions">
+              <button data-sample="클릭할 때마다 숫자가 올라가고 기록을 리스트에 저장하는 작품을 만들어줘">숫자 카운터</button>
+              <button data-sample="귀여운 우주 고양이 이미지를 만들고 화살표 키로 움직이는 게임을 만들어줘">이미지 게임</button>
+            </div>
           </div>
+        </article>
+      </section>
+
+      <div id="alertBox" class="alert hidden" role="alert"></div>
+      <section class="composer-wrap">
+        <div id="attachmentList" class="attachment-list"></div>
+        <div class="composer">
+          <label class="attach-btn" title="파일 첨부">
+            <input id="fileInput" type="file" multiple accept=".ent,.json,.txt,.md,.csv,image/*">
+            <span>＋</span>
+          </label>
+          <textarea id="userPrompt" rows="1" placeholder="vibentry에게 작품을 설명하세요"></textarea>
+          <button id="generateBtn" class="send-btn" type="button" aria-label="보내기">↑</button>
         </div>
+        <small class="composer-note">Enter로 보내기 · Shift+Enter로 줄바꿈</small>
+      </section>
+    </main>
 
-        <section class="rail-section">
-          <div class="section-head">
-            <h2>작업 모드</h2>
-            <p>새 작품을 만들거나 기존 `.ent`를 수정할 수 있어요.</p>
-          </div>
-          <div class="mode-switch">
-            <button type="button" class="mode-btn active" data-mode="create">새로 만들기</button>
-            <button type="button" class="mode-btn" data-mode="edit">.ent 수정</button>
-          </div>
-        </section>
+    <aside id="inspector" class="inspector">
+      <header><strong>현재 작품</strong><button id="closePreviewBtn" class="icon-btn" type="button">×</button></header>
+      <div id="projectSummary" class="project-summary">아직 작품이 없어요.</div>
+      <div id="stagePreview" class="stage-preview"><span>미리보기</span></div>
+      <div id="objectList" class="object-list"></div>
+      <div class="download-row">
+        <button id="downloadEntBtn" disabled type="button">.ent 파일 받기</button>
+        <button id="downloadJsonBtn" disabled type="button">JSON</button>
+      </div>
+    </aside>
+  </div>
 
-        <section class="rail-section">
-          <div class="section-head">
-            <h2>Gemini 연결</h2>
-            <p>API 키만 넣으면 vibentry가 자동으로 제미나이 모델을 골라요.</p>
-          </div>
+  <dialog id="settingsDialog">
+    <form method="dialog" class="settings-card">
+      <div class="dialog-head"><strong>Gemini 연결</strong><button value="cancel" class="icon-btn">×</button></div>
+      <p>Google AI Studio에서 만든 API 키를 입력하면 사용할 수 있는 Gemini 모델을 자동으로 선택해요.</p>
+      <label>API 키<input id="apiKey" type="password" placeholder="AIza..." autocomplete="off"></label>
+      <label class="remember"><input id="rememberKey" type="checkbox"> 이 기기에 키 기억하기</label>
+      <button id="saveSettingsBtn" value="default" class="primary">저장</button>
+    </form>
+  </dialog>
 
-          <label class="field">
-            <span>Gemini API 키</span>
-            <input id="apiKey" type="password" placeholder="AIza..." autocomplete="off">
-          </label>
-
-          <label class="checkbox">
-            <input id="rememberKey" type="checkbox">
-            <span>이 브라우저에 키 저장</span>
-          </label>
-
-          <div class="auto-model-card" id="modelStatus">
-            API 키를 넣으면 자동으로 제미나이 모델을 선택해요.
-          </div>
-        </section>
-
-        <section class="rail-section history-section">
-          <div class="section-head">
-            <h2>히스토리</h2>
-            <p>최근 생성 결과를 이 브라우저에 저장해요.</p>
-          </div>
-
-          <div id="historyList" class="history-list empty">아직 저장된 작업이 없어요.</div>
-        </section>
-      </aside>
-
-      <main class="chat-shell">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">ENTRY AI CHAT</p>
-            <h2>만들고 싶은 작품을 말로 설명해 주세요</h2>
-          </div>
-          <div class="topbar-badge">Gemini + 안전 컴파일</div>
-        </header>
-
-        <section class="chat-thread">
-          <article class="message message-system">
-            <div class="message-avatar">V</div>
-            <div class="message-card">
-              <p class="message-label">vibentry</p>
-              <h3>채팅하듯 엔트리 작품을 만들어요</h3>
-              <p>
-                코드를 몰라도 괜찮아요. 만들고 싶은 기능이나 장면을 한국어로 적으면
-                Gemini의 설계를 정상 템플릿에 적용하고, 블록과 파일을 다시 검사한 뒤
-                오류 없는 `.ent` 초안을 만들거나 수정해 줍니다.
-              </p>
-
-              <div class="sample-row">
-                <button type="button" class="soft-btn" data-sample="quiz">예시: 퀴즈</button>
-                <button type="button" class="soft-btn" data-sample="story">예시: 스토리</button>
-                <button type="button" class="soft-btn" data-sample="tool">예시: 학습 도우미</button>
-              </div>
-            </div>
-          </article>
-
-          <div id="alertBox" class="alert-box hidden" role="alert"></div>
-
-          <article class="message message-assistant">
-            <div class="message-avatar">A</div>
-            <div class="message-card">
-              <p class="message-label">상태</p>
-              <div id="statusBox" class="status-box">준비 완료</div>
-            </div>
-          </article>
-
-          <article class="message message-assistant">
-            <div class="message-avatar">A</div>
-            <div class="message-card">
-              <p class="message-label">AI 응답</p>
-              <div id="responseBox" class="response-box empty">아직 AI 응답이 없어요.</div>
-              <div id="assistantFiles" class="assistant-files empty">AI가 만든 파일이 여기 나타나요.</div>
-            </div>
-          </article>
-        </section>
-
-        <section class="composer-wrap">
-          <div class="composer-card">
-            <div class="composer-grid">
-              <div class="composer-main">
-                <label class="composer-label" for="userPrompt">프롬프트</label>
-                <textarea
-                  id="userPrompt"
-                  rows="8"
-                  placeholder="예: 초보도 쉽게 쓸 수 있는 퀴즈 작품을 만들어 줘. 시작 버튼, 점수 변수, 문제 3개, 정답/오답 메시지, 다시 시작 버튼을 넣어 줘."
-                ></textarea>
-              </div>
-
-              <div class="composer-side">
-                <div class="mini-upload-card">
-                  <div class="mini-upload-head">
-                    <strong>첨부 파일</strong>
-                    <span>.ent / 참고 자료</span>
-                  </div>
-
-                  <label class="mini-upload-box">
-                    <input id="fileInput" type="file" multiple>
-                    <span>파일 올리기</span>
-                    <small>프롬프트 옆에서 빠르게 첨부</small>
-                  </label>
-
-                  <div id="fileList" class="file-list compact empty">아직 불러온 파일이 없어요.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="composer-footer">
-              <div class="composer-note">
-                자연스럽게 적어도 됩니다. AI 결과는 안전 컴파일과 압축 자체 테스트를 거칩니다.
-              </div>
-              <div class="action-row">
-                <button id="generateBtn" class="primary-btn" type="button">AI로 만들기</button>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <aside class="right-rail">
-        <section class="inspector-section">
-          <div class="section-head">
-            <h2>작품 요약</h2>
-            <p>현재 결과의 핵심 구조를 빠르게 확인해요.</p>
-          </div>
-          <div id="projectSummary" class="summary-box empty">아직 생성된 작품이 없어요.</div>
-        </section>
-
-        <section class="inspector-section preview-section">
-          <div class="section-head">
-            <h2>미리보기</h2>
-            <p>오브젝트, 변수, 장면을 바로 눌러서 확인해요.</p>
-          </div>
-
-          <div id="previewEmpty" class="preview-empty">
-            아직 미리볼 내용이 없어요. 파일을 올리거나 결과를 생성하면 여기에서 볼 수 있어요.
-          </div>
-
-          <div id="previewShell" class="preview-shell hidden">
-            <div class="preview-top">
-              <div id="previewMeta" class="preview-meta"></div>
-              <div id="previewSceneList" class="scene-list"></div>
-            </div>
-
-            <div class="preview-stage-wrap">
-              <div class="preview-stage-header">
-                <span>스테이지 프리뷰</span>
-                <small>점이나 이름을 눌러서 오브젝트 보기</small>
-              </div>
-              <div id="stagePreview" class="stage-preview"></div>
-            </div>
-
-            <div class="preview-grid">
-              <div>
-                <h3 class="subhead">오브젝트</h3>
-                <div id="objectList" class="object-list"></div>
-              </div>
-              <div>
-                <h3 class="subhead">선택한 오브젝트</h3>
-                <div id="objectDetail" class="object-detail"></div>
-              </div>
-            </div>
-
-            <div class="preview-grid lower">
-              <div>
-                <h3 class="subhead">변수</h3>
-                <div id="variableList" class="variable-list"></div>
-              </div>
-              <div>
-                <h3 class="subhead">프로젝트 정보</h3>
-                <div id="projectInspector" class="inspector-box"></div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </aside>
-    </div>
-
-    <script type="module" src="./app.js"></script>
-  </body>
+  <script type="module" src="./app.js"></script>
+</body>
 </html>
