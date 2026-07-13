@@ -109,6 +109,26 @@ const finalValidation = validateEntryProject(reopened.project, {
 });
 assert.deepEqual(finalValidation.errors, []);
 
+const counter = structuredClone(template);
+counter.variables.push({
+  id: "score", name: "점수", visible: true, value: "0", variableType: "variable",
+  isCloud: true, isRealTime: true, cloudDate: false, object: null, x: 0, y: 0,
+});
+counter.tables = [{ id: "history", name: "기록", listType: "list", data: ["1"] }];
+counter.objects[0].script = JSON.stringify([[
+  { id:"click", type:"when_object_click", params:[], statements:[[
+    { id:"change", type:"change_variable", params:["score", null, { id:"one", type:"number", params:[1], statements:[] }], statements:[] },
+    { id:"add", type:"add_value_to_list", params:[{ id:"scoreValue", type:"get_variable", params:["score"], statements:[] }, "history"], statements:[] },
+  ]] },
+]]);
+const fixedCounter = repairEntryProject(counter, template);
+assert.deepEqual(fixedCounter.validation.errors, []);
+assert.equal(fixedCounter.project.variables.find((item) => item.id === "history")?.variableType, "list");
+assert.equal(fixedCounter.project.tables.length, 0);
+const counterBlocks = JSON.parse(fixedCounter.project.objects[0].script)[0];
+assert.deepEqual(counterBlocks.map((block) => block.type), ["when_object_click", "change_variable", "add_value_to_list"]);
+assert.deepEqual(counterBlocks[0].statements, []);
+
 console.log(
   `entry pipeline ok: ${finalValidation.stats.objects} objects, ${finalValidation.stats.blocks} blocks, ${reopened.entries.length} archive entries`
 );
