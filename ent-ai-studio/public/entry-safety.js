@@ -162,6 +162,26 @@ const MESSAGE_REFERENCE_INDEX = new Map([
   ["when_message_cast", 1],
 ]);
 const SCENE_REFERENCE_INDEX = new Map([["start_scene", 0]]);
+const LIST_REFERENCE_INDEX = new Map([
+  ["add_value_to_list", 1],
+  ["insert_value_to_list", 1],
+  ["value_of_index_from_list", 1],
+  ["change_value_list_index", 1],
+  ["remove_value_from_list", 1],
+  ["is_included_in_list", 1],
+  ["length_of_list", 0],
+  ["show_list", 0],
+  ["hide_list", 0],
+]);
+const EVENT_BLOCK_TYPES = new Set([
+  "when_clone_start",
+  "when_message_cast",
+  "when_object_click",
+  "when_object_click_canceled",
+  "when_run_button_click",
+  "when_scene_start",
+  "when_some_key_pressed",
+]);
 
 export function collectArchiveAssetNames(entries = []) {
   const names = new Set();
@@ -207,7 +227,11 @@ export function repairEntryProject(candidate, baseProject, options = {}) {
   const sceneState = normalizeScenes(source.scenes, baseProject.scenes, reporter);
   project.scenes = sceneState.items;
 
-  const variableState = normalizeVariables(source.variables, baseProject.variables, reporter);
+  const legacyLists = safeArray(source.tables).filter((item) =>
+    isPlainObject(item) && (item.listType === "list" || Array.isArray(item.data) || Array.isArray(item.array))
+  );
+  const sourceVariables = [...safeArray(source.variables), ...legacyLists.map(normalizeLegacyList)];
+  const variableState = normalizeVariables(sourceVariables, baseProject.variables, reporter);
   project.variables = variableState.items;
 
   const messageState = normalizeMessages(source.messages, baseProject.messages, reporter);
@@ -268,7 +292,12 @@ export function repairEntryProject(candidate, baseProject, options = {}) {
     ) || "[]",
   }));
 
-  project.tables = normalizeOpaqueCollection(source.tables, baseProject.tables, "표", reporter);
+  project.tables = normalizeOpaqueCollection(
+    safeArray(source.tables).filter((item) => !legacyLists.includes(item)),
+    baseProject.tables,
+    "표",
+    reporter
+  );
   project.interface = normalizeInterface(source.interface, baseProject.interface, project.objects, objectState);
 
   const objectIds = new Set(project.objects.map((item) => item.id));
@@ -324,6 +353,9 @@ export function validateEntryProject(project, options = {}) {
   const objectIds = validateUniqueIds(project.objects, "오브젝트", errors);
   const sceneIds = validateUniqueIds(project.scenes, "장면", errors);
   const variableIds = validateUniqueIds(project.variables, "변수", errors);
+  const listIds = new Set(safeArray(project.variables)
+    .filter((item) => item?.variableType === "list")
+    .map((item) => item.id));
   const messageIds = validateUniqueIds(project.messages, "신호", errors);
   const functionIds = validateUniqueIds(project.functions, "함수", errors);
   const allowedBlockTypes = new Set(ENTRY_SAFE_BLOCK_TYPES);
@@ -357,6 +389,7 @@ export function validateEntryProject(project, options = {}) {
       usedBlockIds,
       allowedBlockTypes,
       variableIds,
+      listIds,
       messageIds,
       sceneIds,
       functionIds,
@@ -374,6 +407,7 @@ export function validateEntryProject(project, options = {}) {
       usedBlockIds,
       allowedBlockTypes,
       variableIds,
+      listIds,
       messageIds,
       sceneIds,
       functionIds,
@@ -440,20 +474,27 @@ function normalizeVariables(candidate, fallback, reporter) {
     const oldId = cleanId(item.id);
     const id = allocateId(oldId || template.id, "v", used, counter, reporter);
     rememberId(idMap, oldId || template.id, id);
-    items.push({
+    const variableType = cleanText(item.variableType, template.variableType || "variable", 40);
+    const normalized = {
       ...cloneJson(template),
       id,
       name: cleanText(item.name, template.name || `변수 ${items.length + 1}`, 120),
       visible: booleanValue(item.visible, template.visible, false),
       value: safeJsonValue(item.value, template.value ?? "0"),
-      variableType: cleanText(item.variableType, template.variableType || "variable", 40),
+      variableType,
       isCloud: booleanValue(item.isCloud, template.isCloud, false),
       isRealTime: booleanValue(item.isRealTime, template.isRealTime, false),
       cloudDate: booleanValue(item.cloudDate, template.cloudDate, false),
       object: typeof item.object === "string" ? item.object : null,
       x: finiteNumber(item.x, template.x, -100000, 100000),
       y: finiteNumber(item.y, template.y, -100000, 100000),
-    });
+    };
+    if (variableType === "list") {
+      normalized.array = safeArray(item.array).slice(0, MAX_COLLECTION_ITEMS).map((entry) => ({
+        data: cleanText(isPlainObject(entry) ? entry.data : entry, "", MAX_TEXT_LENGTH),
+      }));
+    }
+    items.push(normalized);
   }
 
   for (const builtin of fallbackItems.filter((item) => item?.variableType === "timer" || item?.variableType === "answer")) {
@@ -468,6 +509,18 @@ function normalizeVariables(candidate, fallback, reporter) {
 
   const nameMap = new Map(items.map((item) => [item.name, item.id]));
   return { items, ids: new Set(items.map((item) => item.id)), idMap, nameMap };
+}
+
+function normalizeLegacyList(item) {
+  const values = Array.isArray(item.array) ? item.array : safeArray(item.data);
+  return {
+    ...item,
+    variableType: "list",
+    value: "0",
+    array: values.map((entry) => ({ data: String(isPlainObject(entry) ? entry.data ?? "" : entry ?? "") })),
+    isCloud: item.isCloud === true,
+    isRealTime: item.isRealTime === true,
+  };
 }
 
 function normalizeMessages(candidate, fallback, reporter) {
@@ -803,6 +856,11 @@ function normalizeScript(rawValue, fallbackValue, context, label) {
       const block = normalizeBlock(rawBlock, context, 0, label);
       if (block) {
         blocks.push(block);
+        if (EVENT_BLOCK_TYPES.has(block.type) && block.statements.some((statement) => statement.length)) {
+          blocks.push(...block.statements.flat());
+          block.statements = [];
+          context.reporter.add("eventBodyFlattened", `${label}의 이벤트 안쪽 코드를 실행 순서에 맞게 복구했어요.`);
+        }
       }
     }
     if (blocks.length) {
@@ -905,6 +963,16 @@ function repairBlockReference(block, context) {
   if (SCENE_REFERENCE_INDEX.has(block.type)) {
     return replaceRequiredReference(block.params, SCENE_REFERENCE_INDEX.get(block.type), context.sceneState);
   }
+  if (LIST_REFERENCE_INDEX.has(block.type)) {
+    const index = LIST_REFERENCE_INDEX.get(block.type);
+    const current = block.params[index];
+    const resolved = resolveReference(current, context.variableState);
+    const list = context.variableState.items.find((item) => item.id === resolved && item.variableType === "list");
+    if (!list) {
+      return false;
+    }
+    block.params[index] = list.id;
+  }
   if (block.type.startsWith("func_")) {
     const id = block.type.slice(5);
     return context.validFunctionIds
@@ -1005,6 +1073,12 @@ function validateBlock(block, label, context, depth) {
   }
   if (VARIABLE_REFERENCE_TYPES.has(block.type) && !context.variableIds.has(block.params[0])) {
     context.errors.push(`${label}의 ${block.type} 블록이 없는 변수를 가리켜요.`);
+  }
+  if (LIST_REFERENCE_INDEX.has(block.type)) {
+    const listId = block.params[LIST_REFERENCE_INDEX.get(block.type)];
+    if (!context.listIds.has(listId)) {
+      context.errors.push(`${label}의 ${block.type} 블록이 없는 리스트를 가리켜요.`);
+    }
   }
   if (
     MESSAGE_REFERENCE_INDEX.has(block.type)
