@@ -166,10 +166,10 @@ const LIST_REFERENCE_INDEX = new Map([
   ["add_value_to_list", 1],
   ["insert_value_to_list", 1],
   ["value_of_index_from_list", 1],
-  ["change_value_list_index", 1],
+  ["change_value_list_index", 0],
   ["remove_value_from_list", 1],
   ["is_included_in_list", 1],
-  ["length_of_list", 0],
+  ["length_of_list", 1],
   ["show_list", 0],
   ["hide_list", 0],
 ]);
