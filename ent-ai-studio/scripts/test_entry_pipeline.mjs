@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildEntBlob, readEntArchive } from "../public/entry-archive.js";
+import { ENTRY_AUTHORING_GUIDE, ENTRY_KNOWLEDGE_SOURCES } from "../public/entry-knowledge.js";
+import { extractInteractionImage, extractInteractionText } from "../public/gemini-interactions.js";
 import {
   collectArchiveAssetNames,
   repairEntryProject,
@@ -12,6 +14,20 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const templatePath = path.join(__dirname, "..", "templates", "blank-entry-template.json");
 const template = JSON.parse(fs.readFileSync(templatePath, "utf8"));
+
+assert.match(ENTRY_AUTHORING_GUIDE, /change_value_list_index \[listId, indexBlock, valueBlock, null\]/);
+assert.match(ENTRY_AUTHORING_GUIDE, /Event blocks have statements:\[\]/);
+assert.ok(ENTRY_KNOWLEDGE_SOURCES.some((url) => url.includes("entrylabs/entryjs")));
+assert.equal(
+  extractInteractionText({ steps: [{ type: "model_output", content: [{ type: "text", text: '{"ok":true}' }] }] }),
+  '{"ok":true}'
+);
+assert.equal(extractInteractionText({ outputs: { text: "legacy object output" } }), "legacy object output");
+assert.equal(extractInteractionText({ output: "legacy string output" }), "legacy string output");
+assert.equal(
+  extractInteractionImage({ steps: [{ content: [{ type: "image", data: "abc", mime_type: "image/jpeg" }] }] }),
+  "data:image/jpeg;base64,abc"
+);
 
 const cleanResult = repairEntryProject(template, template);
 assert.deepEqual(cleanResult.validation.errors, []);
@@ -117,8 +133,11 @@ counter.variables.push({
 counter.tables = [{ id: "history", name: "기록", listType: "list", data: ["1"] }];
 counter.objects[0].script = JSON.stringify([[
   { id:"click", type:"when_object_click", params:[], statements:[[
-    { id:"change", type:"change_variable", params:["score", null, { id:"one", type:"number", params:[1], statements:[] }], statements:[] },
-    { id:"add", type:"add_value_to_list", params:[{ id:"scoreValue", type:"get_variable", params:["score"], statements:[] }, "history"], statements:[] },
+    { id:"change", type:"change_variable", params:["score", { id:"one", type:"number", params:["1"], statements:[] }, null], statements:[] },
+    { id:"add", type:"add_value_to_list", params:[{ id:"scoreValue", type:"get_variable", params:["score"], statements:[] }, "history", null], statements:[] },
+    { id:"replace", type:"change_value_list_index", params:["history", { id:"first", type:"number", params:["1"], statements:[] }, { id:"saved", type:"text", params:["saved"], statements:[] }, null], statements:[] },
+    { id:"syncLength", type:"set_variable", params:["score", { id:"listLength", type:"length_of_list", params:[null, "history", null], statements:[] }, null], statements:[] },
+    { id:"showHistory", type:"show_list", params:["history", null], statements:[] },
   ]] },
 ]]);
 const fixedCounter = repairEntryProject(counter, template);
@@ -126,8 +145,10 @@ assert.deepEqual(fixedCounter.validation.errors, []);
 assert.equal(fixedCounter.project.variables.find((item) => item.id === "history")?.variableType, "list");
 assert.equal(fixedCounter.project.tables.length, 0);
 const counterBlocks = JSON.parse(fixedCounter.project.objects[0].script)[0];
-assert.deepEqual(counterBlocks.map((block) => block.type), ["when_object_click", "change_variable", "add_value_to_list"]);
+assert.deepEqual(counterBlocks.map((block) => block.type), ["when_object_click", "change_variable", "add_value_to_list", "change_value_list_index", "set_variable", "show_list"]);
 assert.deepEqual(counterBlocks[0].statements, []);
+assert.equal(counterBlocks[3].params[0], "history");
+assert.equal(counterBlocks[4].params[1].params[1], "history");
 
 console.log(
   `entry pipeline ok: ${finalValidation.stats.objects} objects, ${finalValidation.stats.blocks} blocks, ${reopened.entries.length} archive entries`
