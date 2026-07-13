@@ -1,5 +1,7 @@
 import { ENTRY_SAFE_BLOCK_TYPES, collectArchiveAssetNames, repairEntryProject } from "./entry-safety.js";
 import { buildEntBlob, readEntArchive } from "./entry-archive.js";
+import { entryKnowledgePrompt } from "./entry-knowledge.js";
+import { extractInteractionImage, extractInteractionText } from "./gemini-interactions.js";
 
 const $ = (selector) => document.querySelector(selector);
 const ui = {
@@ -118,18 +120,13 @@ function buildAgentPrompt(request,base) {
     "You are vibentry, a precise conversational agent that creates and edits complete Entry project.json files.",
     "Respond in natural Korean. Continue editing the supplied current project instead of starting over unless asked.",
     "You may add or delete any number of objects. Preserve requested existing behavior and remove only what the user requests.",
-    "Every object script is a JSON-stringified 2D array. An event block and following action blocks are sequential elements in one thread; NEVER put event actions in event.statements.",
-    "Use statements only for control blocks such as repeat_basic, repeat_inf, _if, if_else, repeat_while_true.",
-    "Lists belong in project.variables with variableType='list' and array=[{data:'...'}]. Never put lists in tables.",
-    "Variable blocks use variable id in params[0]. List blocks use list id: add/insert/value/change/remove/include params[1], length/show/hide params[0].",
-    "For click counters, include when_object_click followed by change_variable, then add_value_to_list or insert_value_to_list with valid nested number/get_variable blocks.",
-    "Cloud persistence uses isCloud:true and isRealTime:true only where Entry supports it. Explain sign-in or cloud limitations honestly.",
+    entryKnowledgePrompt(),
     "Use unique IDs and consistent scene, selectedPictureId and interface.object references.",
     `Only use verified block types: ${ENTRY_SAFE_BLOCK_TYPES.join(", ")}.`,
     "To create a new image, add an asset_requests item with the target object_id and a detailed visual prompt. Keep a temporary valid existing picture on that object; the app will replace it.",
     "To use an attached image, set source_image_name to its exact IMAGE filename in asset_requests. Do not invent asset URLs.",
     "Return the entire resulting project in project_json, not a patch.",
-    urls.length?`The app enabled URL context for these public links: ${urls.join(", ")}`:"No URLs supplied.",
+    urls.length?`[USER_PUBLIC_URLS]\nThe app enabled URL context for these public links: ${urls.join(", ")}`:"No user URLs supplied.",
     `RECENT CONVERSATION:\n${recent || "none"}`,
     `ATTACHMENTS:\n${references || "none"}`,
     `USER REQUEST:\n${request}`,
@@ -142,13 +139,21 @@ async function callAgent(key,prompt) {
   for (const model of MODELS) {
     try {
       ui.model.textContent=`${model} 작업 중`;
-      const body={model,input:[{type:"text",text:prompt}],response_format:{type:"json_schema",json_schema:{name:"entry_project",schema,strict:true}}};
-      if (/https?:\/\//.test(prompt)) body.tools=[{type:"url_context"}];
+      const body={
+        model,
+        input:[{type:"text",text:prompt}],
+        response_format:{
+          type:"text",
+          mime_type:"application/json",
+          schema,
+        },
+      };
+      if (prompt.includes("[USER_PUBLIC_URLS]") && model.startsWith("gemini-3")) body.tools=[{type:"url_context"}];
       if (session.interactionId) body.previous_interaction_id=session.interactionId;
       const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/interactions`,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify(body)});
       const data=await response.json();
       if (!response.ok) throw apiError(response.status,data);
-      const parsed=JSON.parse(extractText(data));
+      const parsed=JSON.parse(extractInteractionText(data));
       parsed.interactionId=data.id;
       ui.model.textContent=model;
       return parsed;
@@ -166,32 +171,16 @@ async function applyAssets(key,project,requests) {
     const attached=files.find((file)=>file.kind==="image" && file.name===request.source_image_name);
     if (attached) dataUrl=attached.dataUrl;
     else {
-      const response=await fetch("https://generativelanguage.googleapis.com/v1beta/interactions",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify({model:IMAGE_MODEL,input:[{type:"text",text:`Create a clean game sprite for Entry. ${request.prompt}. Transparent or simple background, centered subject, no text.`}],response_format:{type:"image",mime_type:"image/png",aspect_ratio:"1:1",image_size:"1K"}})});
+      const response=await fetch("https://generativelanguage.googleapis.com/v1beta/interactions",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify({model:IMAGE_MODEL,input:[{type:"text",text:`Create a clean game sprite for Entry. ${request.prompt}. Transparent or simple background, centered subject, no text.`}],response_format:{type:"image",mime_type:"image/jpeg",aspect_ratio:"1:1",image_size:"1K"}})});
       const data=await response.json(); if(!response.ok) throw apiError(response.status,data);
-      dataUrl=extractImage(data);
+      dataUrl=extractInteractionImage(data);
     }
     if (!dataUrl) throw new Error(`${request.name} 이미지를 만들지 못했어요.`);
     const dimension=await imageSize(dataUrl); const id=`img_${crypto.randomUUID().replaceAll("-","").slice(0,10)}`;
-    object.sprite={...(object.sprite||{}),pictures:[{id,name:request.name,fileurl:dataUrl,thumbUrl:dataUrl,dimension,imageType:"png"}],sounds:object.sprite?.sounds||[]};
+    object.sprite={...(object.sprite||{}),pictures:[{id,name:request.name,fileurl:dataUrl,thumbUrl:dataUrl,dimension,imageType:attached?.type?.split("/")[1]||"jpeg"}],sounds:object.sprite?.sounds||[]};
     object.selectedPictureId=id;
   }
   return project;
-}
-
-function extractText(data) {
-  if (typeof data.output_text==="string") return data.output_text;
-  const output=data.outputs || data.output || [];
-  for (const item of output) {
-    if (typeof item.text==="string") return item.text;
-    for (const part of item.content?.parts || item.content || []) if(typeof part.text==="string") return part.text;
-  }
-  throw new Error("Gemini 응답에서 작품 JSON을 찾지 못했어요.");
-}
-
-function extractImage(data) {
-  const candidates=[data.output_image,data.image,...(data.outputs||[]),...(data.output||[])];
-  for(const item of candidates){const raw=item?.data||item?.image?.data||item?.inline_data?.data||item?.inlineData?.data;if(raw)return `data:${item.mime_type||item.mimeType||"image/png"};base64,${raw}`;}
-  return null;
 }
 
 function compactProjectForPrompt(project) {
