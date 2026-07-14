@@ -54,6 +54,7 @@ class FakePool {
     this.tokens = new Map();
     this.sessions = new Map();
     this.closed = false;
+    this.memoryPayload = null;
   }
   async query(sql, params = []) {
     if (sql.includes("CREATE TABLE")) return { rows: [], rowCount: 0 };
@@ -87,7 +88,8 @@ class FakePool {
       return { rows: [{ updated_at: params[3] }], rowCount: 1 };
     }
     if (sql.startsWith("UPDATE vibentry_accounts SET memory")) {
-      this.account.memory = params[1];
+      this.memoryPayload = params[1];
+      this.account.memory = JSON.parse(params[1]);
       return { rows: [], rowCount: 1 };
     }
     throw new Error(`Unexpected SQL in fake pool: ${sql.slice(0, 80)}`);
@@ -112,6 +114,8 @@ assert.equal(authenticated.displayName, "테스트 사용자");
 await store.putSession(authenticated.id, session);
 assert.equal((await store.listSessions(authenticated.id))[0].id, session.id);
 assert.deepEqual(await store.updateMemory(authenticated.id, ["쉬운 한국어 설명 선호"]), ["쉬운 한국어 설명 선호"]);
+assert.equal(typeof fakePool.memoryPayload, "string");
+assert.deepEqual(JSON.parse(fakePool.memoryPayload), fakePool.account.memory);
 await store.revokeToken(loggedIn.token);
 assert.equal(await store.authenticate(loggedIn.token), null);
 await store.deleteAccount(authenticated.id);
