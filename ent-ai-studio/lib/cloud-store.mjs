@@ -181,8 +181,8 @@ export class CloudStore {
     this.assertReady();
     const safe = normalizeMemory(memory);
     await this.pool.query(
-      "UPDATE vibentry_accounts SET memory = $2, updated_at = NOW() WHERE id = $1",
-      [accountId, safe]
+      "UPDATE vibentry_accounts SET memory = $2::jsonb, updated_at = NOW() WHERE id = $1",
+      [accountId, JSON.stringify(safe)]
     );
     return safe;
   }
