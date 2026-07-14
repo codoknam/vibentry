@@ -1346,7 +1346,7 @@ jobs:
           P9UNa29ipEUKGIdPFtQUEQrYY1BrxssIdv/W+PPNv2/+ffPvf95//wOEP+MhAHAEAA==
           VIBENTRY_ARCHIVE
           tar -xzf /tmp/vibentry-update.tar.gz -C .
-          rm -f .github/workflows/apply-vibentry-update.yml
+          rm -f .github/workflows/ci.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add --all
