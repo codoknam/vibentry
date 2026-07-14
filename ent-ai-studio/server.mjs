@@ -24,7 +24,7 @@ try {
   }
   await cloud.init();
 } catch (error) {
-  cloudError = describeCloudStartupError(error);
+  cloudError = `${describeCloudStartupError(error)}; target=${describeDatabaseTarget(process.env.DATABASE_URL)}`;
   console.error(`vibentry cloud disabled: ${cloudError}`);
 }
 
@@ -37,6 +37,23 @@ function describeCloudStartupError(error) {
     return error.message;
   }
   return error?.constructor?.name || "Cloud initialization failed";
+}
+
+function describeDatabaseTarget(connectionString) {
+  try {
+    const url = new URL(connectionString);
+    const hostname = url.hostname.toLowerCase();
+    const hostKind = ["localhost", "127.0.0.1", "::1"].includes(hostname)
+      ? "loopback"
+      : hostname.startsWith("dpg-") && !hostname.includes(".")
+        ? "render-internal"
+        : hostname.includes("render.com")
+          ? "render-external"
+          : "other";
+    return `${hostKind}:${url.port || "5432"}`;
+  } catch {
+    return "invalid-url";
+  }
 }
 
 const mimeTypes = {
