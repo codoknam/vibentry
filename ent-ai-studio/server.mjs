@@ -24,8 +24,19 @@ try {
   }
   await cloud.init();
 } catch (error) {
-  cloudError = error instanceof Error ? error.message : "Cloud initialization failed";
+  cloudError = describeCloudStartupError(error);
   console.error(`vibentry cloud disabled: ${cloudError}`);
+}
+
+function describeCloudStartupError(error) {
+  if (error instanceof AggregateError) {
+    const codes = [...new Set(error.errors.flatMap((item) => [item?.code, item?.syscall]).filter(Boolean))];
+    return `AggregateError${codes.length ? ` (${codes.join(", ")})` : ""}`;
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return error?.constructor?.name || "Cloud initialization failed";
 }
 
 const mimeTypes = {
