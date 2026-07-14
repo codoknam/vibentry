@@ -2,7 +2,23 @@ services:
   - type: web
     name: vibentry
     runtime: node
+    plan: free
     rootDir: ent-ai-studio
-    buildCommand: npm install
+    buildCommand: npm ci && npm test
     startCommand: npm start
     healthCheckPath: /api/status
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vibentry-db
+          property: connectionString
+      - key: CLOUD_TOKEN_SECRET
+        generateValue: true
+
+databases:
+  - name: vibentry-db
+    plan: free
+    databaseName: vibentry
+    user: vibentry

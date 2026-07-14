@@ -1,4 +1,8 @@
 export const ENTRY_KNOWLEDGE_SOURCES = Object.freeze([
+  "https://docs.playentry.org/entryjs/typedef/2024-03-15-project-data.html",
+  "https://docs.playentry.org/entryjs/typedef/2024-03-15-object-data.html",
+  "https://docs.playentry.org/entryjs/typedef/2024-03-15-variable-data.html",
+  "https://docs.playentry.org/entryjs/file/2024-07-24-ent.html",
   "https://github.com/entrylabs/entryjs#프로젝트-project-schema",
   "https://docs.playentry.org/guide/entryjs/2016-05-22-add_new_blocks.html",
   "https://github.com/entrylabs/entryjs/blob/develop/src/playground/blocks/block_start.js",
@@ -27,6 +31,12 @@ PROJECT MODEL
 - A normal variable belongs in variables with variableType:"variable". A list ALSO belongs in variables, with variableType:"list" and array:[{data:"value"}]. A list never belongs in tables.
 - Local variables use object:<object id>; global variables use object:null.
 - Cloud data uses isCloud:true. Use isRealTime:true only when the current project/version supports it. Cloud behavior requires an Entry account/network/project context; an offline .ent file alone cannot promise cross-user persistence.
+
+ASSET MODEL
+- Never invent an uploaded asset path. Keep an existing valid picture until the application fulfills asset_requests.
+- The application embeds generated images using Entry's official sharded layout: fileId[0..2]/fileId[2..4]/image/fileId.ext and a matching thumb path inside the temp archive.
+- Request a custom image whenever the user's requested object should not visibly remain as an unrelated template character.
+- Make each asset prompt self-contained: subject, view, silhouette, palette, background/transparency, and game readability.
 
 SCRIPT MODEL
 - object.script and function.content are JSON.stringify(twoDimensionalThreads). Example: [[eventBlock, actionBlock, actionBlock], [anotherEvent, action]].
@@ -73,6 +83,7 @@ RELIABLE CONSTRUCTION PATTERNS
 - Initialization thread: when_run_button_click -> set_variable -> optional show_variable/show_list. Do not reset a cloud value if the user wants it preserved between visits.
 - Keyboard controls use one thread per key event. Continuous controls use when_run_button_click -> repeat_inf and an _if with is_press_some_key inside.
 - A button must have a button-like picture or generated asset; do not rename Entrybot to "button" while retaining an unrelated Entrybot picture.
+- Runtime efficiency: prefer one clear game loop over duplicated loops, reuse signals and variables, avoid unbounded clone creation, and insert a small wait in non-frame-critical infinite loops.
 
 FINAL SELF-CHECK BEFORE RESPONDING
 - Verify unique IDs recursively, valid references, selected pictures, object count, and scene membership.

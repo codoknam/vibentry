@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildEntBlob, readEntArchive } from "../public/entry-archive.js";
 import { ENTRY_AUTHORING_GUIDE, ENTRY_KNOWLEDGE_SOURCES } from "../public/entry-knowledge.js";
-import { extractInteractionImage, extractInteractionText } from "../public/gemini-interactions.js";
+import { extractInteractionCitations, extractInteractionImage, extractInteractionText } from "../public/gemini-interactions.js";
 import {
   collectArchiveAssetNames,
   repairEntryProject,
@@ -17,7 +17,9 @@ const template = JSON.parse(fs.readFileSync(templatePath, "utf8"));
 
 assert.match(ENTRY_AUTHORING_GUIDE, /change_value_list_index \[listId, indexBlock, valueBlock, null\]/);
 assert.match(ENTRY_AUTHORING_GUIDE, /Event blocks have statements:\[\]/);
+assert.match(ENTRY_AUTHORING_GUIDE, /official sharded layout/);
 assert.ok(ENTRY_KNOWLEDGE_SOURCES.some((url) => url.includes("entrylabs/entryjs")));
+assert.ok(ENTRY_KNOWLEDGE_SOURCES.some((url) => url.includes("docs.playentry.org/entryjs/file")));
 assert.equal(
   extractInteractionText({ steps: [{ type: "model_output", content: [{ type: "text", text: '{"ok":true}' }] }] }),
   '{"ok":true}'
@@ -28,6 +30,12 @@ assert.equal(
   extractInteractionImage({ steps: [{ content: [{ type: "image", data: "abc", mime_type: "image/jpeg" }] }] }),
   "data:image/jpeg;base64,abc"
 );
+assert.deepEqual(extractInteractionCitations({
+  steps: [{ content: [{ type: "text", text: "참고", annotations: [
+    { type: "url_citation", title: "Entry Docs", url: "https://docs.playentry.org/" },
+    { type: "url_citation", title: "중복", url: "https://docs.playentry.org/" },
+  ] }] }],
+}), [{ title: "Entry Docs", url: "https://docs.playentry.org/" }]);
 
 const cleanResult = repairEntryProject(template, template);
 assert.deepEqual(cleanResult.validation.errors, []);

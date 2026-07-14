@@ -73,3 +73,26 @@ export function extractInteractionImage(data = {}) {
 
   return null;
 }
+
+export function extractInteractionCitations(data = {}) {
+  const candidates = [
+    ...asItems(data.steps),
+    ...asItems(data.outputs),
+    ...asItems(data.output),
+  ];
+  const citations = new Map();
+
+  for (const item of flattenInteractionContent(candidates)) {
+    for (const annotation of asItems(item?.annotations)) {
+      if (annotation?.type !== "url_citation" || typeof annotation.url !== "string") continue;
+      if (citations.has(annotation.url)) continue;
+      citations.set(annotation.url, {
+        url: annotation.url,
+        title: typeof annotation.title === "string" && annotation.title.trim()
+          ? annotation.title.trim().slice(0, 180)
+          : annotation.url,
+      });
+    }
+  }
+  return [...citations.values()];
+}

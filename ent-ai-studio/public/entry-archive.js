@@ -56,7 +56,7 @@ export async function buildEntBlob(project, sourceEntries = []) {
       typeFlag: "0",
       mode: 0o644,
     },
-    ...preserved,
+    ...addRequiredDirectories(preserved),
   ];
 
   const tarParts = [];
@@ -73,6 +73,24 @@ export async function buildEntBlob(project, sourceEntries = []) {
   const tarBlob = new Blob(tarParts, { type: "application/octet-stream" });
   const gzipStream = tarBlob.stream().pipeThrough(new CompressionStream("gzip"));
   return new Blob([await new Response(gzipStream).arrayBuffer()], { type: "application/gzip" });
+}
+
+function addRequiredDirectories(entries) {
+  const byName = new Map(entries.map((entry) => [entry.name, entry]));
+  for (const entry of entries) {
+    if (entry.typeFlag === "5") continue;
+    const parts = entry.name.split("/").filter(Boolean);
+    for (let depth = 2; depth < parts.length; depth += 1) {
+      const directory = `${parts.slice(0, depth).join("/")}/`;
+      if (!directory.startsWith("temp/") || byName.has(directory)) continue;
+      byName.set(directory, { name: directory, data: new Uint8Array(0), typeFlag: "5", mode: 0o755 });
+    }
+  }
+  const directories = [...byName.values()]
+    .filter((entry) => entry.typeFlag === "5")
+    .sort((a, b) => a.name.split("/").length - b.name.split("/").length || a.name.localeCompare(b.name));
+  const files = entries.filter((entry) => entry.typeFlag !== "5");
+  return [...directories, ...files];
 }
 
 export function parseTar(buffer) {

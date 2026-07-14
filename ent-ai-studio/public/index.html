@@ -13,14 +13,20 @@
       <button id="newChatBtn" class="new-chat" type="button">+ 새 작품 대화</button>
       <p class="rail-label">최근 대화</p>
       <div id="historyList" class="history-list"></div>
-      <button id="settingsBtn" class="settings-link" type="button">Gemini API 설정</button>
+      <button id="settingsBtn" class="settings-link" type="button">
+        <span>설정과 기기 간 저장</span>
+        <small id="cloudBadge">이 기기에 저장 중</small>
+      </button>
     </aside>
 
     <main class="chat-shell">
       <header class="topbar">
         <button id="menuBtn" class="icon-btn mobile-only" type="button" aria-label="메뉴">☰</button>
         <div><strong id="chatTitle">새 Entry 작품</strong><small id="modelStatus">Gemini 자동 선택</small></div>
-        <button id="previewBtn" class="preview-toggle" type="button">작품 보기</button>
+        <div class="top-actions">
+          <button id="workbenchBtn" class="workbench-toggle" type="button"><span></span>AI 작업실</button>
+          <button id="previewBtn" class="preview-toggle" type="button">작품 보기</button>
+        </div>
       </header>
 
       <section id="chatThread" class="chat-thread" aria-live="polite">
@@ -57,10 +63,7 @@
       <div id="projectSummary" class="project-summary">아직 작품이 없어요.</div>
       <div id="stagePreview" class="stage-preview"><span>미리보기</span></div>
       <div id="objectList" class="object-list"></div>
-      <div class="download-row">
-        <button id="downloadEntBtn" disabled type="button">.ent 파일 받기</button>
-        <button id="downloadJsonBtn" disabled type="button">JSON</button>
-      </div>
+      <p class="artifact-hint">완성 파일은 AI 답변에 첨부돼요.</p>
     </aside>
   </div>
 
@@ -70,8 +73,130 @@
       <p>Google AI Studio에서 만든 API 키를 입력하면 사용할 수 있는 Gemini 모델을 자동으로 선택해요.</p>
       <label>API 키<input id="apiKey" type="password" placeholder="AIza..." autocomplete="off"></label>
       <label class="remember"><input id="rememberKey" type="checkbox"> 이 기기에 키 기억하기</label>
-      <button id="saveSettingsBtn" value="default" class="primary">저장</button>
+      <button id="saveSettingsBtn" value="default" class="primary">API 설정 저장</button>
+
+      <div class="settings-divider"></div>
+      <section class="cloud-settings">
+        <div class="cloud-title">
+          <div><strong>기기 간 저장</strong><small id="cloudStatus">연결되지 않음</small></div>
+          <span class="cloud-dot" id="cloudDot"></span>
+        </div>
+        <p>동기화 코드와 PIN을 사용하면 PC와 모바일에서 모든 새 채팅, 대화 내용, 작품과 AI 기억을 이어갈 수 있어요. Gemini API 키는 동기화하지 않아요.</p>
+
+        <div id="cloudSignedOut" class="cloud-auth-grid">
+          <div class="cloud-auth-card">
+            <strong>처음 연결하기</strong>
+            <label>표시 이름<input id="cloudDisplayName" type="text" maxlength="30" placeholder="예: 김어묵"></label>
+            <label>새 PIN<input id="cloudCreatePin" type="password" inputmode="numeric" maxlength="12" placeholder="숫자 6자리 이상"></label>
+            <button id="cloudRegisterBtn" type="button" class="secondary">동기화 코드 만들기</button>
+          </div>
+          <div class="cloud-auth-card">
+            <strong>다른 기기에서 불러오기</strong>
+            <label>동기화 코드<input id="cloudLoginCode" type="text" maxlength="18" placeholder="VIBE-XXXX-XXXX" autocapitalize="characters"></label>
+            <label>PIN<input id="cloudLoginPin" type="password" inputmode="numeric" maxlength="12" placeholder="설정한 PIN"></label>
+            <button id="cloudLoginBtn" type="button" class="secondary">기존 대화 불러오기</button>
+          </div>
+        </div>
+
+        <div id="cloudSignedIn" class="cloud-connected hidden">
+          <span>내 동기화 코드</span>
+          <code id="cloudSyncCode">VIBE-XXXX-XXXX</code>
+          <small>다른 기기에서 이 코드와 PIN을 입력하세요. 코드를 공개 게시물에 올리지 마세요.</small>
+          <div class="memory-panel">
+            <strong>AI가 기억 중인 내용</strong>
+            <div id="cloudMemoryList" class="memory-list">아직 저장된 기억이 없어요.</div>
+            <button id="clearMemoryBtn" type="button" class="text-button">AI 기억 모두 지우기</button>
+          </div>
+          <div class="cloud-actions">
+            <button id="copySyncCodeBtn" type="button" class="secondary">코드 복사</button>
+            <button id="syncNowBtn" type="button" class="secondary">지금 동기화</button>
+            <button id="cloudLogoutBtn" type="button" class="text-button">이 기기 연결 해제</button>
+            <button id="cloudDeleteBtn" type="button" class="text-button danger">서버 저장 계정 삭제</button>
+          </div>
+        </div>
+      </section>
     </form>
+  </dialog>
+
+  <dialog id="workbenchDialog" class="workbench-dialog">
+    <div class="workbench-shell">
+      <header class="workbench-header">
+        <div class="workbench-heading">
+          <span class="workbench-mark">v</span>
+          <div><strong>Entry AI 작업실</strong><small>AI의 작업 현황을 보고 직접 오브젝트와 코드를 수정하세요.</small></div>
+        </div>
+        <div class="workbench-header-actions">
+          <span id="workbenchDirtyBadge" class="workbench-dirty">현재 작품과 일치</span>
+          <button id="closeWorkbenchBtn" type="button" class="icon-btn" aria-label="작업실 닫기">×</button>
+        </div>
+      </header>
+
+      <section class="agent-monitor">
+        <div class="agent-current">
+          <span id="agentStatusDot" class="agent-status-dot ready"></span>
+          <div><strong id="agentStatusText">직접 편집 가능</strong><small id="agentStatusDetail">오브젝트와 코드를 확인하거나 직접 수정할 수 있어요.</small></div>
+          <div class="agent-metrics"><code id="agentModel">Gemini 자동 선택</code><time id="agentElapsed">0:00</time></div>
+          <button id="cancelAgentBtn" type="button" class="danger-button hidden">작업 중단</button>
+        </div>
+        <ol id="agentTimeline" class="agent-timeline"></ol>
+      </section>
+
+      <div id="workbenchLockNotice" class="workbench-lock hidden">AI가 초안을 만드는 동안은 읽기 전용입니다. 작업이 끝나면 바로 수정할 수 있어요.</div>
+
+      <div class="workbench-grid">
+        <aside class="workbench-panel workbench-objects-panel">
+          <div class="workbench-panel-title"><strong>오브젝트</strong><small id="workbenchStats"></small></div>
+          <div class="workbench-add-row">
+            <input id="newObjectName" data-workbench-edit type="text" maxlength="70" placeholder="새 오브젝트 이름">
+            <button id="addWorkbenchObjectBtn" data-workbench-edit type="button" aria-label="오브젝트 추가">＋</button>
+          </div>
+          <div id="workbenchObjectList" class="workbench-object-list"></div>
+          <section class="agent-reference-panel">
+            <strong>AI가 참고한 링크</strong>
+            <div id="agentSources" class="agent-sources"></div>
+          </section>
+          <section class="agent-log-panel">
+            <strong>완료된 작업</strong>
+            <ul id="agentWorkLog"></ul>
+          </section>
+        </aside>
+
+        <section class="workbench-panel workbench-stage-panel">
+          <div class="workbench-panel-title"><strong>무대와 위치</strong><small>오브젝트를 드래그하세요</small></div>
+          <div id="workbenchStage" class="workbench-stage"></div>
+          <div class="workbench-properties">
+            <label class="wide">이름<input id="workbenchObjectName" data-workbench-edit type="text" maxlength="80"></label>
+            <label>x 좌표<input id="workbenchObjectX" data-workbench-edit type="number" min="-240" max="240" step="0.1"></label>
+            <label>y 좌표<input id="workbenchObjectY" data-workbench-edit type="number" min="-135" max="135" step="0.1"></label>
+            <label>회전<input id="workbenchObjectRotation" data-workbench-edit type="number" step="1"></label>
+            <label>크기 %<input id="workbenchObjectScale" data-workbench-edit type="number" min="5" max="1000" step="1"></label>
+            <label class="visible-check"><input id="workbenchObjectVisible" data-workbench-edit type="checkbox"> 화면에 보이기</label>
+          </div>
+          <button id="deleteWorkbenchObjectBtn" data-workbench-edit type="button" class="text-button danger">선택 오브젝트 삭제</button>
+        </section>
+
+        <section class="workbench-panel workbench-code-panel">
+          <div class="workbench-panel-title"><strong>블록 코드</strong><small>빠른 블록 또는 고급 JSON</small></div>
+          <div class="quick-block-builder">
+            <select id="quickBlockType" data-workbench-edit></select>
+            <input id="quickBlockValue" data-workbench-edit type="text">
+            <select id="quickBlockThread" data-workbench-edit></select>
+            <button id="addQuickBlockBtn" data-workbench-edit type="button">블록 추가</button>
+          </div>
+          <div id="workbenchCodeList" class="workbench-code-list"></div>
+          <details class="raw-script-editor">
+            <summary>고급 스크립트 JSON 직접 편집</summary>
+            <textarea id="workbenchRawScript" data-workbench-edit spellcheck="false"></textarea>
+            <div><button id="formatRawScriptBtn" data-workbench-edit type="button" class="text-button">JSON 정리</button><button id="applyRawScriptBtn" data-workbench-edit type="button" class="secondary">초안에 반영</button></div>
+          </details>
+        </section>
+      </div>
+
+      <footer class="workbench-footer">
+        <span>모든 수정은 Entry 안전 검사를 통과해야 실제 작품에 적용됩니다.</span>
+        <div><button id="resetWorkbenchBtn" data-workbench-edit type="button" class="text-button">초안 되돌리기</button><button id="applyWorkbenchBtn" data-workbench-edit type="button" class="primary">현재 작품에 적용</button></div>
+      </footer>
+    </div>
   </dialog>
 
   <script type="module" src="./app.js"></script>
